@@ -1,0 +1,68 @@
+[
+  {
+    "incident_id": "INC-2026-001",
+    "zone_id": "Z04",
+    "zone_name": "Uni-Mall & Student Commercial Square",
+    "timestamp": "2026-11-13T10:15:00",
+    "category": "CROWD_CONGESTION",
+    "severity": 4,
+    "status": "RESOLVED",
+    "description": "High overcrowding reported at ground floor food court entrance causing stairwell bottleneck.",
+    "is_simulated": true
+  },
+  {
+    "incident_id": "INC-2026-002",
+    "zone_id": "Z08",
+    "zone_name": "Boys Hostel Cluster (BH-1, BH-2, BH-3, BH-4)",
+    "timestamp": "2026-11-13T02:40:00",
+    "category": "NOISE_DISTURBANCE",
+    "severity": 2,
+    "status": "RESOLVED",
+    "description": "Late-night loudspeaker disturbance in inner hostel quadrangle.",
+    "is_simulated": true
+  },
+  {
+    "incident_id": "INC-2026-003",
+    "zone_id": "Z05",
+    "zone_name": "Central Bus Terminus & Multi-Level Parking",
+    "timestamp": "2026-11-12T19:30:00",
+    "category": "SUSPICIOUS_VEHICLE",
+    "severity": 3,
+    "status": "RESOLVED",
+    "description": "Unregistered delivery scooter parked in designated university fleet bay.",
+    "is_simulated": true
+  },
+  {
+    "incident_id": "INC-2026-004",
+    "zone_id": "Z01",
+    "zone_name": "Main Security Gate 1 & Visitor Access",
+    "timestamp": "2026-11-13T11:00:00",
+    "category": "ACCESS_VIOLATION",
+    "severity": 3,
+    "status": "INVESTIGATING",
+    "description": "Visitor vehicle attempted unauthorized entry through faculty express lane.",
+    "is_simulated": true
+  },
+  {
+    "incident_id": "INC-2026-005",
+    "zone_id": "Z03",
+    "zone_name": "Engineering & Technology Complex (Blocks 32-34)",
+    "timestamp": "2026-11-11T16:20:00",
+    "category": "EQUIPMENT_ALERT",
+    "severity": 2,
+    "status": "RESOLVED",
+    "description": "Server room cooling alarm triggered in Block 33 laboratory annex.",
+    "is_simulated": true
+  },
+  {
+    "incident_id": "INC-2026-006",
+    "zone_id": "Z11",
+    "zone_name": "Indoor Stadium & Olympic Sports Complex",
+    "timestamp": "2026-11-10T21:10:00",
+    "category": "PERIMETER_CHECK",
+    "severity": 2,
+    "status": "RESOLVED",
+    "description": "Athletics field floodlight malfunction resulting in low-visibility zone.",
+    "is_simulated": true
+  }
+]
