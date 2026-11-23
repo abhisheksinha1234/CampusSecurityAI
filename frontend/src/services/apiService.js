@@ -103,6 +103,7 @@ export const apiService = {
       headers: getAuthHeaders(),
       credentials: 'include',
     });
+    if (res.status === 401) throw new Error('AUTH_EXPIRED');
     if (!res.ok) throw new Error('Failed to fetch campus zones');
     return res.json();
   },
@@ -151,6 +152,21 @@ export const apiService = {
     return res.json();
   },
 
+  async toggleZoneRestriction(zoneId, isRestricted, reason = '') {
+    const params = new URLSearchParams({ is_restricted: isRestricted });
+    if (reason) params.append('reason', reason);
+    const res = await fetch(`${API_BASE}/campus/zones/${zoneId}/restriction?${params}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      credentials: 'include',
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Failed to toggle zone restriction');
+    }
+    return res.json();
+  },
+
   // Risk Engine
   async getRiskScores() {
     const res = await fetch(`${API_BASE}/risk/scores`, {
@@ -175,7 +191,22 @@ export const apiService = {
       headers: getAuthHeaders(),
       credentials: 'include',
     });
+    if (res.status === 401) throw new Error('AUTH_EXPIRED');
     if (!res.ok) throw new Error('Failed to fetch incidents');
+    return res.json();
+  },
+
+  async createIncident(incidentData) {
+    const res = await fetch(`${API_BASE}/risk/incidents`, {
+      method: 'POST',
+      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+      credentials: 'include',
+      body: JSON.stringify(incidentData),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Failed to report incident');
+    }
     return res.json();
   },
 
@@ -197,12 +228,27 @@ export const apiService = {
   },
 
   async getCurrentPlan() {
-    const res = await fetch(`${API_BASE}/patrol/current`, {
-      headers: getAuthHeaders(),
-      credentials: 'include',
-    });
-    if (!res.ok) throw new Error('Failed to fetch active patrol plan');
-    return res.json();
+    try {
+      const res = await fetch(`${API_BASE}/patrol/current`, {
+        headers: getAuthHeaders(),
+        credentials: 'include',
+      });
+      if (res.status === 404) {
+        return null;
+      }
+      if (res.status === 401) {
+        throw new Error('AUTH_EXPIRED');
+      }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || 'Failed to fetch active patrol plan');
+      }
+      return await res.json();
+    } catch (err) {
+      if (err.message === 'AUTH_EXPIRED') throw err;
+      console.warn('getCurrentPlan warning:', err.message);
+      return null;
+    }
   },
 
   async approvePlan(planId, reviewerName, action, comments = '') {

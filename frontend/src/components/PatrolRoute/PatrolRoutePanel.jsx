@@ -65,9 +65,10 @@ export const PatrolRoutePanel = ({
     }
   };
 
-  // Generate dynamic arrival plan timeline items based on patrol plan stops or defaults
-  const timelineStops = patrolPlan?.stops && patrolPlan.stops.length > 0
-    ? patrolPlan.stops.slice(0, 5).map((stop, i) => {
+  // Generate dynamic arrival plan timeline items based on verified active patrol plan stops
+  const hasActiveStops = Boolean(patrolPlan?.stops && patrolPlan.stops.length > 0);
+  const timelineStops = hasActiveStops
+    ? patrolPlan.stops.slice(0, 6).map((stop, i) => {
         const baseMin = 30 + i * 8;
         const hr = Math.floor(baseMin / 60) + 8;
         const min = baseMin % 60;
@@ -79,12 +80,7 @@ export const PatrolRoutePanel = ({
           icon: i === 0 ? 'dep' : i === 1 ? 'window' : i === 2 ? 'gate' : i === 3 ? 'site' : 'venue',
         };
       })
-    : [
-        { time: '08:30', title: 'Patrol departure', subtitle: 'Central Command Hub (Z12)', icon: 'dep' },
-        { time: '08:45', title: 'Gate 1 access checkpoint', subtitle: 'NH-44 Highway Entrance', icon: 'gate' },
-        { time: '09:00', title: 'VIP Corridor arrival', subtitle: 'Unipolis Arena & Admin Block', icon: 'site' },
-        { time: '09:15', title: 'Uni-Mall student square', subtitle: 'Food court & commercial sweep', icon: 'venue' },
-      ];
+    : [];
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl flex flex-col h-full text-slate-200">
@@ -137,30 +133,44 @@ export const PatrolRoutePanel = ({
                 <Clock className="w-3.5 h-3.5 text-cyan-400" />
                 <span>Arrival plan</span>
               </span>
-              <span className="text-[10px] font-mono text-cyan-400 bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-800/60">
-                ACTIVE
+              <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
+                hasActiveStops
+                  ? 'text-cyan-400 bg-cyan-950/60 border-cyan-800/60'
+                  : 'text-amber-400 bg-amber-950/60 border-amber-800/60'
+              }`}>
+                {patrolPlan?.status || 'NO ACTIVE PLAN'}
               </span>
             </div>
 
-            <div className="relative pl-6 space-y-3.5 before:absolute before:left-2 before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-700">
-              {timelineStops.map((item, idx) => (
-                <div key={idx} className="relative flex items-start gap-3 text-xs">
-                  {/* Timeline Dot */}
-                  <div className="absolute -left-6 top-0.5 w-4 h-4 rounded-full bg-cyan-500 border-2 border-slate-900 flex items-center justify-center shadow-[0_0_8px_rgba(6,182,212,0.8)]">
-                    <span className="w-1.5 h-1.5 rounded-full bg-white"></span>
-                  </div>
+            {hasActiveStops ? (
+              <div className="relative pl-6 space-y-3.5 before:absolute before:left-2 before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-700">
+                {timelineStops.map((item, idx) => (
+                  <div key={idx} className="relative flex items-start gap-3 text-xs">
+                    {/* Timeline Dot */}
+                    <div className="absolute -left-6 top-0.5 w-4 h-4 rounded-full bg-cyan-500 border-2 border-slate-900 flex items-center justify-center shadow-[0_0_8px_rgba(6,182,212,0.8)]">
+                      <span className="w-1.5 h-1.5 rounded-full bg-white"></span>
+                    </div>
 
-                  <span className="font-mono text-slate-400 font-bold shrink-0 text-[11px] pt-0.5">
-                    {item.time}
-                  </span>
+                    <span className="font-mono text-slate-400 font-bold shrink-0 text-[11px] pt-0.5">
+                      {item.time}
+                    </span>
 
-                  <div className="flex-1 min-w-0 bg-slate-800/40 p-2 rounded-xl border border-slate-800">
-                    <div className="font-bold text-white text-xs truncate">{item.title}</div>
-                    <div className="text-[10px] text-slate-400 truncate">{item.subtitle}</div>
+                    <div className="flex-1 min-w-0 bg-slate-800/40 p-2 rounded-xl border border-slate-800">
+                      <div className="font-bold text-white text-xs truncate">{item.title}</div>
+                      <div className="text-[10px] text-slate-400 truncate">{item.subtitle}</div>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            ) : (
+              <div className="py-6 px-3 text-center rounded-xl bg-slate-800/30 border border-slate-800 text-slate-400 my-2">
+                <Navigation className="w-7 h-7 mx-auto mb-2 text-slate-600" />
+                <p className="text-xs font-semibold text-slate-300">No Active Patrol Plan Deployed</p>
+                <p className="text-[10px] text-slate-500 mt-1">
+                  Switch to the 'AI Optimizer' tab to configure constraints and dispatch patrol officers.
+                </p>
+              </div>
+            )}
           </div>
 
           {/* 2. Gate Assignments (from reference image) */}

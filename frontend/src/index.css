@@ -40,3 +40,114 @@ code, pre, .font-mono {
 .animate-pulse-subtle {
   animation: pulse-subtle 3s infinite ease-in-out;
 }
+
+/* Leaflet Dark SOC Theme Popups and Markers */
+.leaflet-container {
+  background-color: #070D18 !important;
+  font-family: inherit;
+}
+
+.leaflet-popup-content-wrapper {
+  background: #091224 !important;
+  color: #F1F5F9 !important;
+  border: 1px solid #334155 !important;
+  border-radius: 12px !important;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.6) !important;
+  padding: 0 !important;
+}
+
+.leaflet-popup-content {
+  margin: 10px 14px !important;
+  line-height: 1.4 !important;
+}
+
+.leaflet-popup-tip {
+  background: #091224 !important;
+  border: 1px solid #334155 !important;
+}
+
+.leaflet-popup-close-button {
+  color: #94A3B8 !important;
+  padding: 6px 8px !important;
+}
+
+.leaflet-popup-close-button:hover {
+  color: #FFFFFF !important;
+}
+
+.leaflet-control-attribution {
+  background: rgba(10, 17, 32, 0.85) !important;
+  color: #94A3B8 !important;
+  font-size: 10px !important;
+  backdrop-filter: blur(4px);
+  border-top-left-radius: 6px;
+  padding: 2px 6px !important;
+}
+
+.leaflet-control-attribution a {
+  color: #38BDF8 !important;
+  text-decoration: none;
+}
+
+.leaflet-control-attribution a:hover {
+  text-decoration: underline;
+}
+
+/* =====================================================================
+   Compact Circular Zone Markers (30×30 px)
+   ===================================================================== */
+
+/* Strip Leaflet's default wrapper padding/background from zone icons */
+.custom-leaflet-zone-icon {
+  background: transparent !important;
+  border: none !important;
+  overflow: visible !important;
+}
+
+/* The actual circle element rendered inside the divIcon html */
+.sector-circle-marker {
+  /* Base size enforced inline; these guard against accidental overrides */
+  width: 30px !important;
+  height: 30px !important;
+  border-radius: 50% !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  will-change: transform;
+}
+
+.sector-circle-marker:hover {
+  transform: scale(1.22) !important;
+  filter: brightness(1.15);
+}
+
+/* Waypoint and incident icon wrappers — no default Leaflet chrome */
+.custom-leaflet-waypoint-icon,
+.custom-leaflet-incident-icon {
+  background: transparent !important;
+  border: none !important;
+  overflow: visible !important;
+}
+
+/* Incident icons — allow triangle animation to overflow */
+.custom-leaflet-incident-icon > div {
+  overflow: visible;
+}
+
+/* Route arrow markers — no chrome */
+.route-arrow-icon {
+  background: transparent !important;
+  border: none !important;
+  overflow: visible !important;
+}
+
+/* Route / demo status badge floating label */
+.route-label-icon {
+  background: transparent !important;
+  border: none !important;
+  overflow: visible !important;
+  /* Ensure the label div inside is fully visible */
+  width: auto !important;
+}
