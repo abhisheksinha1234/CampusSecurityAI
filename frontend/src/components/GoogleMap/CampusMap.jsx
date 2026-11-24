@@ -263,6 +263,25 @@ const computeDisplayOffsets = (zones) => {
 };
 
 // ---------------------------------------------------------------------------
+// Layer popup safety helper
+// ---------------------------------------------------------------------------
+/**
+ * Safely closes any open popups on layer children before clearing layers
+ * to prevent Leaflet classList/undefined runtime errors during DOM detachment.
+ */
+const safelyClearLayer = (layerGroup) => {
+  if (!layerGroup) return;
+  layerGroup.eachLayer((layer) => {
+    if (typeof layer.closePopup === 'function' && layer.isPopupOpen && layer.isPopupOpen()) {
+      try {
+        layer.closePopup();
+      } catch (_) {}
+    }
+  });
+  layerGroup.clearLayers();
+};
+
+// ---------------------------------------------------------------------------
 // Main Component
 // ---------------------------------------------------------------------------
 export const CampusMap = ({
@@ -277,6 +296,9 @@ export const CampusMap = ({
   const mapInstanceRef  = useRef(null);
   const tileLayerRef    = useRef(null);
   const markersMapRef   = useRef(new Map());
+  const polygonsMapRef  = useRef(new Map());
+  const heatCirclesMapRef = useRef(new Map());
+  const prevSelectedZoneIdRef = useRef(null);
 
   // Five separate, independent layer groups
   const buildingsLayerRef = useRef(null); // Layer 1: zone polygons + circle markers
@@ -320,6 +342,29 @@ export const CampusMap = ({
       attributionControl: true,
     });
 
+    // Custom panes enforcing strict visual stacking hierarchy:
+    // 1. Base tiles (built-in tilePane at 200)
+    // 2. Risk heat zones (riskZonesPane at 300)
+    // 3. Buildings footprints (buildingsPane at 350) & Sector markers (sectorMarkersPane at 400)
+    // 4. Patrol route (patrolRoutePane at 450) & Waypoints (patrolWaypointsPane at 500)
+    // 5. Security incidents (incidentsPane at 600)
+    // Popups remain in default popupPane (700)
+    const customPanes = [
+      { name: 'riskZonesPane', zIndex: 300 },
+      { name: 'buildingsPane', zIndex: 350 },
+      { name: 'sectorMarkersPane', zIndex: 400 },
+      { name: 'patrolRoutePane', zIndex: 450 },
+      { name: 'patrolWaypointsPane', zIndex: 500 },
+      { name: 'incidentsPane', zIndex: 600 },
+    ];
+
+    customPanes.forEach(({ name, zIndex }) => {
+      if (!map.getPane(name)) {
+        const pane = map.createPane(name);
+        pane.style.zIndex = String(zIndex);
+      }
+    });
+
     const tileConfig = TILE_LAYERS[activeTileId] || TILE_LAYERS.dark;
     const tile = L.tileLayer(tileConfig.url, {
       attribution: tileConfig.attribution,
@@ -349,9 +394,25 @@ export const CampusMap = ({
 
     return () => {
       window.removeEventListener('resize', onResize);
-      map.off('zoomend', onZoom);
-      mapInstanceRef.current?.remove();
-      mapInstanceRef.current = null;
+      if (mapInstanceRef.current) {
+        try {
+          mapInstanceRef.current.closePopup();
+        } catch (_) {}
+        mapInstanceRef.current.off('zoomend', onZoom);
+        mapInstanceRef.current.off();
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+      }
+      tileLayerRef.current = null;
+      riskZonesLayerRef.current = null;
+      buildingsLayerRef.current = null;
+      routeLayerRef.current = null;
+      waypointsLayerRef.current = null;
+      incidentsLayerRef.current = null;
+      markersMapRef.current.clear();
+      polygonsMapRef.current.clear();
+      heatCirclesMapRef.current.clear();
+      setIsMapReady(false);
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -377,8 +438,9 @@ export const CampusMap = ({
   // ─── 3. LAYER 1: Campus Buildings / Security Zones ────────────────────────
   useEffect(() => {
     if (!isMapReady || !buildingsLayerRef.current) return;
-    buildingsLayerRef.current.clearLayers();
+    safelyClearLayer(buildingsLayerRef.current);
     markersMapRef.current.clear();
+    polygonsMapRef.current.clear();
 
     if (!showBuildings) return;
 
@@ -406,6 +468,7 @@ export const CampusMap = ({
       // A. Building footprint polygon
       if (footprint) {
         const poly = L.polygon(footprint, {
+          pane: 'buildingsPane',
           color: isSelected ? '#38BDF8' : catColor,
           weight: isSelected ? 2.5 : 1.5,
           opacity: isSelected ? 1 : 0.7,
@@ -418,6 +481,7 @@ export const CampusMap = ({
         poly.bindPopup(polyPopup, { maxWidth: 300, closeButton: true });
         poly.on('click', () => onSelectZone?.(zone));
         buildingsLayerRef.current.addLayer(poly);
+        polygonsMapRef.current.set(zone.zone_id, poly);
       }
 
       // B. Compact 30×30 circular marker with zone code
@@ -430,6 +494,7 @@ export const CampusMap = ({
       });
 
       const marker = L.marker(markerLatLng, {
+        pane: 'sectorMarkersPane',
         icon,
         zIndexOffset: getRiskZIndex(riskScore, riskLevel) + (isSelected ? 2000 : 0),
       });
@@ -445,12 +510,13 @@ export const CampusMap = ({
       buildingsLayerRef.current.addLayer(marker);
       markersMapRef.current.set(zone.zone_id, marker);
     });
-  }, [isMapReady, effectiveZones, showBuildings, selectedZone, onSelectZone, currentZoom]);
+  }, [isMapReady, effectiveZones, showBuildings, onSelectZone, currentZoom]);
 
   // ─── 4. LAYER 2: Risk Heat Coverage Zones ─────────────────────────────────
   useEffect(() => {
     if (!isMapReady || !riskZonesLayerRef.current) return;
-    riskZonesLayerRef.current.clearLayers();
+    safelyClearLayer(riskZonesLayerRef.current);
+    heatCirclesMapRef.current.clear();
 
     if (!showRiskZones) return;
 
@@ -467,6 +533,7 @@ export const CampusMap = ({
       const isRestricted = zone.is_restricted;
 
       const heatCircle = L.circle(trueLatLng, {
+        pane: 'riskZonesPane',
         radius: 55,
         color: riskColor,
         weight: isSelected ? 2.5 : 1.2,
@@ -477,13 +544,122 @@ export const CampusMap = ({
       });
       heatCircle.on('click', () => onSelectZone?.(zone));
       riskZonesLayerRef.current.addLayer(heatCircle);
+      heatCirclesMapRef.current.set(zone.zone_id, heatCircle);
     });
-  }, [isMapReady, effectiveZones, showRiskZones, selectedZone, onSelectZone]);
+  }, [isMapReady, effectiveZones, showRiskZones, onSelectZone]);
+
+  // ─── Dedicated Selected-Zone Highlighting (NO rebuilding of markers) ─────
+  useEffect(() => {
+    if (!isMapReady) return;
+
+    const prevId = prevSelectedZoneIdRef.current;
+    const currId = selectedZone?.zone_id;
+
+    // Reset previous zone styling
+    if (prevId && prevId !== currId) {
+      const prevMarker = markersMapRef.current.get(prevId);
+      const prevZone = effectiveZones.find(z => z.zone_id === prevId);
+      if (prevMarker && prevZone) {
+        const riskScore = Math.round(
+          prevZone.risk_score ?? prevZone.risk_breakdown?.total_score ?? (prevZone.base_priority * 10) ?? 50
+        );
+        const riskLevel = prevZone.risk_level ?? (riskScore >= 75 ? 'High' : 'Low');
+        const riskColor = prevZone.risk_color ?? getRiskColor(riskScore, riskLevel);
+
+        prevMarker.setIcon(L.divIcon({
+          html: buildingIcon(prevId, riskColor, false),
+          className: 'custom-leaflet-zone-icon',
+          iconSize: [30, 30],
+          iconAnchor: [15, 15],
+          popupAnchor: [0, -20],
+        }));
+        prevMarker.setZIndexOffset(getRiskZIndex(riskScore, riskLevel));
+      }
+
+      const prevPoly = polygonsMapRef.current.get(prevId);
+      if (prevPoly && prevZone) {
+        const catColor = CATEGORY_COLOR[prevZone.category] ?? '#64748B';
+        prevPoly.setStyle({
+          color: catColor,
+          weight: 1.5,
+          opacity: 0.7,
+          fillColor: catColor,
+          fillOpacity: 0.12,
+        });
+      }
+
+      const prevCircle = heatCirclesMapRef.current.get(prevId);
+      if (prevCircle && prevZone) {
+        const riskScore = Math.round(
+          prevZone.risk_score ?? prevZone.risk_breakdown?.total_score ?? (prevZone.base_priority * 10) ?? 50
+        );
+        const riskLevel = prevZone.risk_level ?? (riskScore >= 75 ? 'High' : 'Low');
+        const riskColor = prevZone.risk_color ?? getRiskColor(riskScore, riskLevel);
+        prevCircle.setStyle({
+          color: riskColor,
+          weight: 1.2,
+          opacity: 0.5,
+          fillColor: riskColor,
+          fillOpacity: 0.13,
+        });
+      }
+    }
+
+    // Apply active highlight styling to current zone
+    if (currId) {
+      const currMarker = markersMapRef.current.get(currId);
+      const currZone = effectiveZones.find(z => z.zone_id === currId);
+      if (currMarker && currZone) {
+        const riskScore = Math.round(
+          currZone.risk_score ?? currZone.risk_breakdown?.total_score ?? (currZone.base_priority * 10) ?? 50
+        );
+        const riskLevel = currZone.risk_level ?? (riskScore >= 75 ? 'High' : 'Low');
+        const riskColor = currZone.risk_color ?? getRiskColor(riskScore, riskLevel);
+
+        currMarker.setIcon(L.divIcon({
+          html: buildingIcon(currId, riskColor, true),
+          className: 'custom-leaflet-zone-icon',
+          iconSize: [30, 30],
+          iconAnchor: [15, 15],
+          popupAnchor: [0, -20],
+        }));
+        currMarker.setZIndexOffset(getRiskZIndex(riskScore, riskLevel) + 2000);
+      }
+
+      const currPoly = polygonsMapRef.current.get(currId);
+      if (currPoly) {
+        currPoly.setStyle({
+          color: '#38BDF8',
+          weight: 2.5,
+          opacity: 1,
+          fillOpacity: 0.25,
+        });
+      }
+
+      const currCircle = heatCirclesMapRef.current.get(currId);
+      if (currCircle && currZone) {
+        const riskScore = Math.round(
+          currZone.risk_score ?? currZone.risk_breakdown?.total_score ?? (currZone.base_priority * 10) ?? 50
+        );
+        const riskLevel = currZone.risk_level ?? (riskScore >= 75 ? 'High' : 'Low');
+        const riskColor = currZone.risk_color ?? getRiskColor(riskScore, riskLevel);
+        currCircle.setStyle({
+          color: riskColor,
+          weight: 2.5,
+          opacity: 0.9,
+          fillColor: riskColor,
+          fillOpacity: 0.28,
+        });
+      }
+    }
+
+    prevSelectedZoneIdRef.current = currId;
+  }, [selectedZone?.zone_id, isMapReady, effectiveZones]);
 
   // ─── 5. LAYER 3: Security Patrol Route Polyline & Directional Arrows ──────
   useEffect(() => {
     if (!isMapReady || !routeLayerRef.current) return;
-    routeLayerRef.current.clearLayers();
+    safelyClearLayer(routeLayerRef.current);
 
     if (!showRoute) return;
 
@@ -500,6 +676,7 @@ export const CampusMap = ({
 
     // Glowing halo
     routeLayerRef.current.addLayer(L.polyline(coords, {
+      pane: 'patrolRoutePane',
       color: '#06B6D4',
       weight: 10,
       opacity: 0.18,
@@ -509,6 +686,7 @@ export const CampusMap = ({
 
     // Main sharp cyan patrol polyline
     routeLayerRef.current.addLayer(L.polyline(coords, {
+      pane: 'patrolRoutePane',
       color: '#22D3EE',
       weight: 3.5,
       opacity: 0.95,
@@ -530,7 +708,7 @@ export const CampusMap = ({
         iconSize: [10, 9],
         iconAnchor: [5, 4.5],
       });
-      routeLayerRef.current.addLayer(L.marker(mid, { icon: arrIcon, interactive: false, zIndexOffset: 2500 }));
+      routeLayerRef.current.addLayer(L.marker(mid, { pane: 'patrolRoutePane', icon: arrIcon, interactive: false, zIndexOffset: 2500 }));
     }
 
     // Route identifier badge
@@ -548,10 +726,11 @@ export const CampusMap = ({
       const labelIcon = L.divIcon({
         html: routeLabel,
         className: 'route-label-icon',
-        iconSize: [null, null],
-        iconAnchor: [0, 0],
+        iconSize: [160, 24],
+        iconAnchor: [80, 12],
       });
       routeLayerRef.current.addLayer(L.marker(coords[midIdx], {
+        pane: 'patrolRoutePane',
         icon: labelIcon,
         interactive: false,
         zIndexOffset: 2400,
@@ -562,7 +741,7 @@ export const CampusMap = ({
   // ─── 6. LAYER 4: Patrol Waypoint Checkpoints ──────────────────────────────
   useEffect(() => {
     if (!isMapReady || !waypointsLayerRef.current) return;
-    waypointsLayerRef.current.clearLayers();
+    safelyClearLayer(waypointsLayerRef.current);
 
     if (!showWaypoints) return;
 
@@ -584,7 +763,7 @@ export const CampusMap = ({
           popupAnchor: [0, -18],
         });
 
-        const marker = L.marker(latLng, { icon, zIndexOffset: 3000 });
+        const marker = L.marker(latLng, { pane: 'patrolWaypointsPane', icon, zIndexOffset: 3000 });
 
         const popupHtml = `
           <div style="min-width:210px; padding:2px 0; font-family:inherit;">
@@ -631,7 +810,7 @@ export const CampusMap = ({
   // ─── 7. LAYER 5: Security Incidents ───────────────────────────────────────
   useEffect(() => {
     if (!isMapReady || !incidentsLayerRef.current) return;
-    incidentsLayerRef.current.clearLayers();
+    safelyClearLayer(incidentsLayerRef.current);
 
     if (!showIncidents) return;
 
@@ -663,7 +842,7 @@ export const CampusMap = ({
         popupAnchor: [0, isResolved ? -14 : -28],
       });
 
-      const marker = L.marker(latLng, { icon, zIndexOffset: 4000 });
+      const marker = L.marker(latLng, { pane: 'incidentsPane', icon, zIndexOffset: 4000 });
 
       const severityLabel = ['', 'LOW', 'MEDIUM', 'MEDIUM-HIGH', 'HIGH', 'CRITICAL'][Math.min(severity, 5)];
       const ts = inc.timestamp ? new Date(inc.timestamp).toLocaleString() : 'Unknown';
@@ -739,11 +918,11 @@ export const CampusMap = ({
           color:#FCD34D; white-space:nowrap; font-family:monospace; letter-spacing:0.05em;
         ">⚠ INCIDENT LAYER — DEMO MODE</div>`,
         className: 'route-label-icon',
-        iconSize: [null, null],
-        iconAnchor: [0, 0],
+        iconSize: [210, 26],
+        iconAnchor: [105, 13],
       });
       incidentsLayerRef.current.addLayer(
-        L.marker([31.2535, 75.7065], { icon: demoIcon, interactive: false, zIndexOffset: 5000 })
+        L.marker([31.2535, 75.7065], { pane: 'incidentsPane', icon: demoIcon, interactive: false, zIndexOffset: 5000 })
       );
     }
   }, [isMapReady, incidents, effectiveZones, showIncidents]);
@@ -758,9 +937,13 @@ export const CampusMap = ({
         duration: 0.6,
       });
       const m = markersMapRef.current.get(selectedZone.zone_id);
-      if (m && !m.isPopupOpen()) m.openPopup();
+      if (m && typeof m.isPopupOpen === 'function' && !m.isPopupOpen()) {
+        try {
+          m.openPopup();
+        } catch (_) {}
+      }
     }
-  }, [selectedZone, effectiveZones]);
+  }, [selectedZone?.zone_id, effectiveZones]);
 
   // ─── Map Navigation Helpers ───────────────────────────────────────────────
   const handleZoomIn      = () => mapInstanceRef.current?.zoomIn();

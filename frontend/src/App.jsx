@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { apiService } from './services/apiService';
 import { LoginPage } from './components/Auth/LoginPage';
 import { CampusMap } from './components/GoogleMap/CampusMap';
@@ -153,13 +153,25 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
-  // Fetch 8-Factor Explainable AI Breakdown for any zone
+  // Reference tracking for stable closures across polling and background effects
+  const zonesRef = useRef(zones);
+  useEffect(() => {
+    zonesRef.current = zones;
+  }, [zones]);
+
+  const isInitialLoadDoneRef = useRef(false);
+  const isPollingActiveRef = useRef(false);
+  const pollTimerRef = useRef(null);
+  const isFetchingDashboardRef = useRef(false);
+  const lastLoadedUserRef = useRef(null);
+
+  // Fetch 8-Factor Explainable AI Breakdown for any zone (purely user/selection driven)
   const fetchZoneRiskExplanation = useCallback(async (zoneId, defaultName = '') => {
     try {
       const res = await apiService.explainZoneRisk(zoneId);
       const evalData = res.risk_evaluation || {};
       const expData = res.explanation || {};
-      const zoneInList = zones.find((z) => z.zone_id === zoneId);
+      const zoneInList = zonesRef.current.find((z) => z.zone_id === zoneId);
 
       const zoneObj = {
         zone_id: res.zone_id || zoneId,
@@ -184,7 +196,7 @@ export default function App() {
     } catch (err) {
       console.warn(`Could not load explanation for ${zoneId}:`, err);
     }
-  }, [zones]);
+  }, []);
 
   // Auth Handlers
   const handleLoginSuccess = (user, token) => {
@@ -203,70 +215,154 @@ export default function App() {
     setPatrolPlan(null);
     setZones([]);
     setIncidents([]);
+    isInitialLoadDoneRef.current = false;
+    isFetchingDashboardRef.current = false;
+    lastLoadedUserRef.current = null;
   }, []);
 
-  // Fetch initial dashboard data (Plan, Campus Zones, and Incidents)
+  // 1. One-time initial dashboard data loading per session
+  // Automatic AI explanation removed: explanation is fetched purely on user selection
   const fetchDashboardData = useCallback(async () => {
-    if (!currentUser) return;
+    if (!currentUser || isFetchingDashboardRef.current) return;
+    isFetchingDashboardRef.current = true;
     setIsLoadingPlan(true);
     setDashboardError(null);
 
-    // 1. Fetch current active patrol plan from backend (gracefully handle empty/missing plans)
-    let plan = null;
     try {
-      plan = await apiService.getCurrentPlan();
-      setPatrolPlan(plan);
-    } catch (planErr) {
-      if (planErr.message === 'AUTH_EXPIRED') {
-        console.warn('Session expired. Redirecting to login.');
-        handleLogout();
-        return;
+      // 1. Fetch current active patrol plan from backend (gracefully handle empty/missing plans)
+      let plan = null;
+      try {
+        plan = await apiService.getCurrentPlan();
+        setPatrolPlan(plan);
+      } catch (planErr) {
+        if (planErr.message === 'AUTH_EXPIRED') {
+          console.warn('Session expired. Redirecting to login.');
+          handleLogout();
+          return;
+        }
+        console.warn('No active patrol plan found on server:', planErr);
+        setPatrolPlan(null);
       }
-      console.warn('No active patrol plan found on server:', planErr);
-      setPatrolPlan(null);
-    }
 
-    // 2. Fetch all verified campus zones with risk scores
-    let loadedZones = [];
-    try {
-      const zonesData = await apiService.getZones();
-      loadedZones = zonesData.zones || [];
-      setZones(loadedZones);
-    } catch (zoneErr) {
-      if (zoneErr.message === 'AUTH_EXPIRED') {
-        handleLogout();
-        return;
+      // 2. Fetch all verified campus zones with risk scores
+      let loadedZones = [];
+      try {
+        const zonesData = await apiService.getZones();
+        loadedZones = zonesData.zones || [];
+        setZones(loadedZones);
+        zonesRef.current = loadedZones;
+      } catch (zoneErr) {
+        if (zoneErr.message === 'AUTH_EXPIRED') {
+          handleLogout();
+          return;
+        }
+        console.warn('Failed to load campus zones from backend:', zoneErr);
       }
-      console.warn('Failed to load campus zones from backend:', zoneErr);
-    }
 
-    // 3. Fetch campus incidents
-    try {
-      const incData = await apiService.getIncidents();
-      setIncidents(incData.incidents || []);
-    } catch (incErr) {
-      console.warn('Failed to load incidents:', incErr);
-    }
-
-    // 4. Auto-load initial risk explanation
-    if (plan && plan.stops && plan.stops.length > 0) {
-      const highRiskStop = [...plan.stops].sort((a, b) => (b.risk_score || 0) - (a.risk_score || 0))[0];
-      if (highRiskStop && highRiskStop.zone_id) {
-        fetchZoneRiskExplanation(highRiskStop.zone_id, highRiskStop.zone_name);
+      // 3. Fetch campus incidents
+      try {
+        const incData = await apiService.getIncidents();
+        setIncidents(incData.incidents || []);
+      } catch (incErr) {
+        console.warn('Failed to load incidents:', incErr);
       }
-    } else if (loadedZones.length > 0) {
-      fetchZoneRiskExplanation(loadedZones[0].zone_id, loadedZones[0].name);
+
+      isInitialLoadDoneRef.current = true;
+    } finally {
+      setIsLoadingPlan(false);
+      isFetchingDashboardRef.current = false;
     }
+  }, [currentUser, handleLogout]);
 
-    setIsLoadingPlan(false);
-  }, [currentUser, fetchZoneRiskExplanation, handleLogout]);
-
+  // Initial dashboard data load effect (executes once on mount / user login)
+  // Protected against React StrictMode development double-mounting
   useEffect(() => {
+    if (!currentUser) {
+      lastLoadedUserRef.current = null;
+      isInitialLoadDoneRef.current = false;
+      return;
+    }
+    const userKey = currentUser.user_id || currentUser.username || currentUser.email || 'authenticated';
+    if (lastLoadedUserRef.current === userKey) {
+      return;
+    }
+    // Set guard synchronously before kicking off asynchronous fetch
+    lastLoadedUserRef.current = userKey;
     fetchDashboardData();
-  }, [fetchDashboardData]);
+  }, [currentUser, fetchDashboardData]);
 
-  // Map zone identifiers from map clicks or list clicks to backend IDs
-  const handleSelectZone = (zoneOrId) => {
+  // 2. Safe, visibility-aware 30-second background polling
+  // Strictly polls /api/patrol/current and /api/risk/incidents only (never repeatedly calls explain)
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const executePoll = async () => {
+      // Guard against overlapping requests, uninitialized state, or hidden tab
+      if (!isInitialLoadDoneRef.current || isPollingActiveRef.current || document.hidden) {
+        return;
+      }
+      isPollingActiveRef.current = true;
+      try {
+        // Poll current patrol plan
+        try {
+          const plan = await apiService.getCurrentPlan();
+          setPatrolPlan(plan);
+        } catch (planErr) {
+          if (planErr.message === 'AUTH_EXPIRED') {
+            handleLogout();
+            return;
+          }
+        }
+
+        // Poll incidents
+        try {
+          const incData = await apiService.getIncidents();
+          setIncidents(incData.incidents || []);
+        } catch (incErr) {
+          // Graceful fallback on network glitch
+        }
+      } finally {
+        isPollingActiveRef.current = false;
+      }
+    };
+
+    const startPolling = () => {
+      if (!pollTimerRef.current) {
+        pollTimerRef.current = setInterval(executePoll, 30000);
+      }
+    };
+
+    const stopPolling = () => {
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+    };
+
+    // Named visibility change handler for exact add/remove listener cleanup symmetry
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        stopPolling();
+      } else {
+        startPolling();
+      }
+    };
+
+    // Start 30s interval only after initial mount if tab is visible (no immediate duplicate poll)
+    if (!document.hidden) {
+      startPolling();
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      stopPolling();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [currentUser, handleLogout]);
+
+  // Map zone identifiers from map clicks or list clicks to backend IDs (memoized with useCallback)
+  const handleSelectZone = useCallback((zoneOrId) => {
     if (!zoneOrId) return;
 
     let targetId = typeof zoneOrId === 'string' ? zoneOrId : zoneOrId.zone_id || zoneOrId.id;
@@ -286,7 +382,7 @@ export default function App() {
     }
 
     fetchZoneRiskExplanation(targetId, targetName);
-  };
+  }, [fetchZoneRiskExplanation]);
 
   // Human Approval Workflow Handler (HITL)
   const handleApprovePlan = async () => {
