@@ -7,7 +7,16 @@ import unittest
 from fastapi import Response, HTTPException
 
 from backend.main import health_check
-from backend.api.routes_campus import get_zones, get_zones_geojson, get_zone_by_id, get_graph
+from backend.api.routes_campus import (
+    get_zones,
+    get_zones_geojson,
+    get_zone_by_id,
+    get_graph,
+    create_zone,
+    get_edges,
+    toggle_edge_status,
+    toggle_zone_restriction,
+)
 from backend.api.routes_risk import (
     get_risk_scores,
     explain_zone_risk,
@@ -24,6 +33,7 @@ from backend.environment.zone_model import (
     ScenarioSimulationRequest,
     IncidentModel,
     IncidentStatusUpdateRequest,
+    ZoneModel,
 )
 from backend.environment.campus_environment import campus_env
 
@@ -492,6 +502,127 @@ class TestAPIEndpoints(unittest.TestCase):
         # GET filtered by RESOLVED
         resolved_incs = get_incidents(status="RESOLVED", user=ADMIN_USER)
         self.assertTrue(any(i["incident_id"] == inc_id for i in resolved_incs["incidents"]))
+
+    def test_admin_create_zone_success(self):
+        """Admin can successfully register a new zone within LPU coordinates."""
+        new_zone = ZoneModel(
+            zone_id="Z99",
+            name="South Innovation Lab",
+            category="Academic",
+            latitude=31.2530,
+            longitude=75.7037,
+            base_priority=6,
+            description="Robotics and AI research pavilion",
+        )
+        try:
+            res = create_zone(new_zone, user=ADMIN_USER, _role=ADMIN_USER)
+            self.assertEqual(res["status"], "SUCCESS")
+            self.assertEqual(res["zone"]["zone_id"], "Z99")
+            self.assertIn("Z99", campus_env.zones)
+        finally:
+            campus_env.zones.pop("Z99", None)
+
+    def test_duplicate_zone_id_rejected(self):
+        """Attempting to register a zone with an existing ID returns HTTP 400."""
+        dup_zone = ZoneModel(
+            zone_id="Z01",
+            name="Duplicate Main Gate",
+            category="Entrance",
+            latitude=31.2530,
+            longitude=75.7037,
+            base_priority=5,
+        )
+        with self.assertRaises(HTTPException) as ctx:
+            create_zone(dup_zone, user=ADMIN_USER, _role=ADMIN_USER)
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIn("already exists", ctx.exception.detail)
+
+    def test_invalid_coordinates_rejected(self):
+        """Zone coordinates outside LPU campus boundaries raise HTTP 400."""
+        out_of_bounds_zone = ZoneModel(
+            zone_id="Z98",
+            name="Far Off-Campus Site",
+            category="Other",
+            latitude=28.6139,
+            longitude=77.2090,
+            base_priority=5,
+        )
+        with self.assertRaises(HTTPException) as ctx:
+            create_zone(out_of_bounds_zone, user=ADMIN_USER, _role=ADMIN_USER)
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_non_admin_cannot_create_zone(self):
+        """Non-admin user (PATROL_OFFICER or VIEWER) receives HTTP 403 on create_zone."""
+        new_zone = ZoneModel(
+            zone_id="Z97",
+            name="Unauthorized Sector",
+            category="Academic",
+            latitude=31.2530,
+            longitude=75.7037,
+            base_priority=5,
+        )
+        with self.assertRaises(HTTPException) as ctx:
+            create_zone(new_zone, user=OFFICER_USER, _role=OFFICER_USER)
+        self.assertEqual(ctx.exception.status_code, 403)
+
+    def test_get_edges_returns_walkways(self):
+        """GET /api/campus/edges returns all pedestrian paths with operational status."""
+        res = get_edges(user=ADMIN_USER)
+        self.assertIn("edges", res)
+        self.assertGreaterEqual(res["total"], 18)
+        self.assertTrue(all("edge_id" in e and "is_open" in e for e in res["edges"]))
+
+    def test_admin_toggle_walkway_status(self):
+        """Admin can close and reopen pedestrian walkways with immediate status reflection."""
+        edge_id = "E01"
+        try:
+            res_close = toggle_edge_status(
+                edge_id=edge_id,
+                is_open=False,
+                restriction_reason="Maintenance and security drill",
+                user=ADMIN_USER,
+                _role=ADMIN_USER,
+            )
+            self.assertEqual(res_close["status"], "SUCCESS")
+            self.assertFalse(res_close["is_open"])
+            self.assertFalse(campus_env.edges[edge_id]["is_open"])
+
+            res_open = toggle_edge_status(
+                edge_id=edge_id,
+                is_open=True,
+                restriction_reason=None,
+                user=ADMIN_USER,
+                _role=ADMIN_USER,
+            )
+            self.assertEqual(res_open["status"], "SUCCESS")
+            self.assertTrue(res_open["is_open"])
+            self.assertTrue(campus_env.edges[edge_id]["is_open"])
+        finally:
+            campus_env.set_edge_status(edge_id, True, None)
+
+    def test_non_admin_cannot_toggle_walkway_status(self):
+        """Non-admin user receives HTTP 403 when attempting to toggle walkway status."""
+        with self.assertRaises(HTTPException) as ctx:
+            toggle_edge_status(
+                edge_id="E01",
+                is_open=False,
+                restriction_reason=None,
+                user=OFFICER_USER,
+                _role=OFFICER_USER,
+            )
+        self.assertEqual(ctx.exception.status_code, 403)
+
+    def test_toggle_nonexistent_edge_rejected(self):
+        """Toggling a nonexistent edge ID raises HTTP 404."""
+        with self.assertRaises(HTTPException) as ctx:
+            toggle_edge_status(
+                edge_id="E999",
+                is_open=False,
+                restriction_reason=None,
+                user=ADMIN_USER,
+                _role=ADMIN_USER,
+            )
+        self.assertEqual(ctx.exception.status_code, 404)
 
 
 if __name__ == "__main__":

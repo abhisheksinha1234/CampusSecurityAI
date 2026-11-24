@@ -140,6 +140,16 @@ export const apiService = {
     return res.json();
   },
 
+  async getEdges() {
+    const res = await fetch(`${API_BASE}/campus/edges`, {
+      headers: getAuthHeaders(),
+      credentials: 'include',
+    });
+    if (res.status === 401) throw new Error('AUTH_EXPIRED');
+    if (!res.ok) throw new Error('Failed to fetch campus walkways');
+    return res.json();
+  },
+
   async toggleEdgeStatus(edgeId, isOpen, reason) {
     const params = new URLSearchParams({ is_open: isOpen });
     if (reason) params.append('restriction_reason', reason);

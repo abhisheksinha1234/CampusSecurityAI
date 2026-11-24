@@ -8,6 +8,7 @@ import { MetricCards } from './components/RiskDashboard/MetricCards';
 import { ExplainabilityPanel } from './components/Explainability/ExplainabilityPanel';
 import { PatrolRoutePanel } from './components/PatrolRoute/PatrolRoutePanel';
 import { SimulatorPanel } from './components/ScenarioSimulator/SimulatorPanel';
+import { AddZoneModal } from './components/GoogleMap/AddZoneModal';
 import {
   Shield,
   Compass,
@@ -103,6 +104,13 @@ export default function App() {
   const [resolutionNotes, setResolutionNotes] = useState('');
   const [isUpdatingIncident, setIsUpdatingIncident] = useState(false);
   const [incidentNotification, setIncidentNotification] = useState(null);
+
+  // Zone & Walkway Management States (Phase 2)
+  const [isAddZoneOpen, setIsAddZoneOpen] = useState(false);
+  const [walkways, setWalkways] = useState([]);
+  const [zoneSubTab, setZoneSubTab] = useState('sectors'); // 'sectors' | 'walkways'
+  const [zoneActionMessage, setZoneActionMessage] = useState(null);
+  const [isTogglingWalkway, setIsTogglingWalkway] = useState(false);
 
   // Selected Zone State with full 8-factor risk breakdown
   const [selectedZone, setSelectedZone] = useState({
@@ -273,6 +281,14 @@ export default function App() {
         setIncidents(incData.incidents || []);
       } catch (incErr) {
         console.warn('Failed to load incidents:', incErr);
+      }
+
+      // 4. Fetch campus pedestrian walkways
+      try {
+        const edgesData = await apiService.getEdges();
+        setWalkways(edgesData.edges || []);
+      } catch (edgeErr) {
+        console.warn('Failed to load campus walkways:', edgeErr);
       }
 
       isInitialLoadDoneRef.current = true;
@@ -613,6 +629,46 @@ export default function App() {
     }
   };
 
+  const handleAddZone = async (zoneData) => {
+    setZoneActionMessage(null);
+    try {
+      const res = await apiService.addZone(zoneData);
+      setZoneActionMessage({
+        type: 'success',
+        text: res.message || `Zone ${zoneData.zone_id} successfully registered.`,
+      });
+      await fetchDashboardData();
+    } catch (err) {
+      setZoneActionMessage({
+        type: 'error',
+        text: err.message || 'Failed to register campus zone.',
+      });
+      throw err;
+    }
+  };
+
+  const handleToggleWalkway = async (edgeId, isOpen, reason = '') => {
+    setIsTogglingWalkway(true);
+    setZoneActionMessage(null);
+    try {
+      const res = await apiService.toggleEdgeStatus(edgeId, isOpen, reason);
+      setZoneActionMessage({
+        type: 'success',
+        text: `Pedestrian walkway ${edgeId} is now ${isOpen ? 'OPEN' : 'RESTRICTED / CLOSED'}.`,
+      });
+      const edgesRes = await apiService.getEdges();
+      setWalkways(edgesRes.edges || []);
+      await fetchDashboardData();
+    } catch (err) {
+      setZoneActionMessage({
+        type: 'error',
+        text: err.message || 'Failed to update walkway status.',
+      });
+    } finally {
+      setIsTogglingWalkway(false);
+    }
+  };
+
   // If not logged in, render Login Page
   if (!currentUser) {
     return <LoginPage onLoginSuccess={handleLoginSuccess} />;
@@ -659,6 +715,22 @@ export default function App() {
       z.name?.toLowerCase().includes(zoneSearchQuery.toLowerCase()) ||
       z.zone_id?.toLowerCase().includes(zoneSearchQuery.toLowerCase()) ||
       z.category?.toLowerCase().includes(zoneSearchQuery.toLowerCase())
+    );
+  });
+
+  // Filtered walkways for Walkways Administration
+  const filteredWalkways = walkways.filter((w) => {
+    const q = zoneSearchQuery.toLowerCase();
+    const sourceZone = zones.find((z) => z.zone_id === w.source);
+    const targetZone = zones.find((z) => z.zone_id === w.target);
+    return (
+      w.edge_id?.toLowerCase().includes(q) ||
+      w.source?.toLowerCase().includes(q) ||
+      w.target?.toLowerCase().includes(q) ||
+      sourceZone?.name?.toLowerCase().includes(q) ||
+      targetZone?.name?.toLowerCase().includes(q) ||
+      w.surface_type?.toLowerCase().includes(q) ||
+      w.clearance_type?.toLowerCase().includes(q)
     );
   });
 
@@ -1954,21 +2026,21 @@ export default function App() {
               </div>
               <div className="bg-[#091224] border border-slate-800 p-3.5 rounded-xl shadow-lg">
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block mb-1">
-                  Accessible
+                  Open Walkways
                 </span>
                 <div className="text-2xl font-bold text-emerald-400 font-mono">
-                  {zones.filter((z) => !z.is_restricted).length}
+                  {walkways.filter((w) => w.is_open).length} / {walkways.length || 18}
                 </div>
-                <span className="text-[10px] text-slate-500">Open Patrol Sectors</span>
+                <span className="text-[10px] text-slate-500">Active Pedestrian Corridors</span>
               </div>
               <div className="bg-[#091224] border border-slate-800 p-3.5 rounded-xl shadow-lg">
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block mb-1">
-                  Restricted / Lockdown
+                  Lockdown & Restrictions
                 </span>
                 <div className="text-2xl font-bold text-purple-400 font-mono">
-                  {zones.filter((z) => z.is_restricted).length}
+                  {zones.filter((z) => z.is_restricted).length + walkways.filter((w) => !w.is_open).length}
                 </div>
-                <span className="text-[10px] text-slate-500">Active Access Controls</span>
+                <span className="text-[10px] text-slate-500">Active Sector/Path Blocks</span>
               </div>
               <div className="bg-[#091224] border border-slate-800 p-3.5 rounded-xl shadow-lg">
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block mb-1">
@@ -1981,99 +2053,265 @@ export default function App() {
               </div>
             </div>
 
-            {/* Zone Administration Table */}
+            {/* Action Alert Banner */}
+            {zoneActionMessage && (
+              <div
+                className={`p-3 rounded-xl border text-xs flex items-center justify-between ${
+                  zoneActionMessage.type === 'success'
+                    ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300'
+                    : 'bg-red-950/40 border-red-500/40 text-red-300'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  {zoneActionMessage.type === 'success' ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                  )}
+                  <span>{zoneActionMessage.text}</span>
+                </div>
+                <button
+                  onClick={() => setZoneActionMessage(null)}
+                  className="text-slate-400 hover:text-white"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+            {/* Zone & Walkway Administration Directory */}
             <div className="bg-[#091224] border border-slate-800/90 rounded-2xl p-4 shadow-xl flex flex-col flex-1 text-slate-200">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 mb-3 border-b border-slate-800 gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2">
+                    <Layers className="w-4 h-4 text-blue-400" />
+                    <h3 className="font-bold text-sm text-white">Campus Infrastructure Directory</h3>
+                  </div>
+
+                  {/* Sub-tabs: Sectors vs Walkways */}
+                  <div className="flex items-center bg-slate-900 border border-slate-800 rounded-xl p-0.5 text-xs font-semibold">
+                    <button
+                      onClick={() => setZoneSubTab('sectors')}
+                      className={`px-3 py-1 rounded-lg transition ${
+                        zoneSubTab === 'sectors'
+                          ? 'bg-blue-600 text-white shadow'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      Sectors ({zones.length})
+                    </button>
+                    <button
+                      onClick={() => setZoneSubTab('walkways')}
+                      className={`px-3 py-1 rounded-lg transition ${
+                        zoneSubTab === 'walkways'
+                          ? 'bg-blue-600 text-white shadow'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      Walkways ({walkways.length})
+                    </button>
+                  </div>
+                </div>
+
                 <div className="flex items-center gap-2">
-                  <Layers className="w-4 h-4 text-blue-400" />
-                  <h3 className="font-bold text-sm text-white">Campus Sector Management & Boundary Control</h3>
-                </div>
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                    <input
+                      type="text"
+                      placeholder={zoneSubTab === 'sectors' ? 'Search zone code, name...' : 'Search path ID, corridor...'}
+                      value={zoneSearchQuery}
+                      onChange={(e) => setZoneSearchQuery(e.target.value)}
+                      className="bg-slate-900 border border-slate-700/80 rounded-xl pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 w-56 sm:w-64"
+                    />
+                  </div>
 
-                <div className="relative">
-                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
-                  <input
-                    type="text"
-                    placeholder="Search by zone code, name or category..."
-                    value={zoneSearchQuery}
-                    onChange={(e) => setZoneSearchQuery(e.target.value)}
-                    className="bg-slate-900 border border-slate-700/80 rounded-xl pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 w-64"
-                  />
+                  {currentUser?.role === 'ADMIN' && zoneSubTab === 'sectors' && (
+                    <button
+                      onClick={() => setIsAddZoneOpen(true)}
+                      className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition flex items-center gap-1.5 shadow-lg shadow-blue-600/30"
+                    >
+                      <Plus className="w-3.5 h-3.5 stroke-[3]" />
+                      <span>Add Sector</span>
+                    </button>
+                  )}
                 </div>
               </div>
 
-              <div className="overflow-x-auto flex-1">
-                <table className="w-full text-left text-xs">
-                  <thead>
-                    <tr className="border-b border-slate-800 text-[10px] uppercase font-bold text-slate-400 tracking-wider">
-                      <th className="pb-2.5 pl-2">Code</th>
-                      <th className="pb-2.5">Sector Name</th>
-                      <th className="pb-2.5">Category</th>
-                      <th className="pb-2.5">Coordinates (Lat, Lng)</th>
-                      <th className="pb-2.5">Base Priority</th>
-                      <th className="pb-2.5">Access Status</th>
-                      <th className="pb-2.5 text-right pr-2">Security Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/60">
-                    {filteredAdminZones.map((z) => (
-                      <tr key={z.zone_id} className="hover:bg-slate-800/40 transition">
-                        <td className="py-3 pl-2">
-                          <span className="font-mono text-xs font-bold text-blue-400 bg-blue-950/60 px-2 py-0.5 rounded border border-blue-800/40">
-                            {z.zone_id}
-                          </span>
-                        </td>
-                        <td className="py-3">
-                          <div className="font-bold text-white text-xs">{z.name}</div>
-                          <div className="text-[10px] text-slate-400 truncate max-w-xs">{z.description}</div>
-                        </td>
-                        <td className="py-3">
-                          <span className="text-[11px] text-slate-300 font-medium">{z.category || 'Standard'}</span>
-                        </td>
-                        <td className="py-3 font-mono text-[11px] text-slate-400">
-                          {z.latitude?.toFixed(4)}, {z.longitude?.toFixed(4)}
-                        </td>
-                        <td className="py-3 font-mono font-bold text-slate-300 text-xs">
-                          {z.base_priority || 50} / 100
-                        </td>
-                        <td className="py-3">
-                          {z.is_restricted ? (
-                            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/40">
-                              LOCKED DOWN
-                            </span>
-                          ) : (
-                            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-                              ACCESSIBLE
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-3 text-right pr-2">
-                          <div className="flex items-center justify-end gap-2">
-                            <button
-                              onClick={() => {
-                                handleSelectZone(z.zone_id);
-                                setActiveNav('Map View');
-                              }}
-                              className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-semibold transition"
-                            >
-                              Locate
-                            </button>
-                            <button
-                              onClick={() => handleToggleRestriction(z.zone_id, !z.is_restricted)}
-                              className={`px-2.5 py-1 rounded-lg font-bold text-[11px] transition ${
-                                z.is_restricted
-                                  ? 'bg-purple-600 hover:bg-purple-500 text-white'
-                                  : 'bg-slate-800 hover:bg-red-600/80 text-slate-300 hover:text-white border border-slate-700'
-                              }`}
-                            >
-                              {z.is_restricted ? 'Lift Lockdown' : 'Lockdown Sector'}
-                            </button>
-                          </div>
-                        </td>
+              {/* SECTORS TABLE */}
+              {zoneSubTab === 'sectors' && (
+                <div className="overflow-x-auto flex-1">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-800 text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                        <th className="pb-2.5 pl-2">Code</th>
+                        <th className="pb-2.5">Sector Name</th>
+                        <th className="pb-2.5">Category</th>
+                        <th className="pb-2.5">Coordinates (Lat, Lng)</th>
+                        <th className="pb-2.5">Base Priority</th>
+                        <th className="pb-2.5">Access Status</th>
+                        <th className="pb-2.5 text-right pr-2">Security Action</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60">
+                      {filteredAdminZones.map((z) => (
+                        <tr key={z.zone_id} className="hover:bg-slate-800/40 transition">
+                          <td className="py-3 pl-2">
+                            <span className="font-mono text-xs font-bold text-blue-400 bg-blue-950/60 px-2 py-0.5 rounded border border-blue-800/40">
+                              {z.zone_id}
+                            </span>
+                          </td>
+                          <td className="py-3">
+                            <div className="font-bold text-white text-xs">{z.name}</div>
+                            <div className="text-[10px] text-slate-400 truncate max-w-xs">{z.description}</div>
+                          </td>
+                          <td className="py-3">
+                            <span className="text-[11px] text-slate-300 font-medium">{z.category || 'Standard'}</span>
+                          </td>
+                          <td className="py-3 font-mono text-[11px] text-slate-400">
+                            {z.latitude?.toFixed(4)}, {z.longitude?.toFixed(4)}
+                          </td>
+                          <td className="py-3 font-mono font-bold text-slate-300 text-xs">
+                            {z.base_priority || 50} / 100
+                          </td>
+                          <td className="py-3">
+                            {z.is_restricted ? (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/40">
+                                LOCKED DOWN
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                                ACCESSIBLE
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-3 text-right pr-2">
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                onClick={() => {
+                                  handleSelectZone(z.zone_id);
+                                  setActiveNav('Map View');
+                                }}
+                                className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-semibold transition"
+                              >
+                                Locate
+                              </button>
+                              <button
+                                onClick={() => handleToggleRestriction(z.zone_id, !z.is_restricted)}
+                                className={`px-2.5 py-1 rounded-lg font-bold text-[11px] transition ${
+                                  z.is_restricted
+                                    ? 'bg-purple-600 hover:bg-purple-500 text-white'
+                                    : 'bg-slate-800 hover:bg-red-600/80 text-slate-300 hover:text-white border border-slate-700'
+                                }`}
+                              >
+                                {z.is_restricted ? 'Lift Lockdown' : 'Lockdown Sector'}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* WALKWAYS TABLE */}
+              {zoneSubTab === 'walkways' && (
+                <div className="overflow-x-auto flex-1">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-800 text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                        <th className="pb-2.5 pl-2">Path ID</th>
+                        <th className="pb-2.5">Corridor Route</th>
+                        <th className="pb-2.5">Surface & Clearance</th>
+                        <th className="pb-2.5">Distance & Transit</th>
+                        <th className="pb-2.5">Operational Status</th>
+                        <th className="pb-2.5 text-right pr-2">Corridor Control</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60">
+                      {filteredWalkways.map((w) => {
+                        const sZone = zones.find((z) => z.zone_id === w.source);
+                        const tZone = zones.find((z) => z.zone_id === w.target);
+                        return (
+                          <tr key={w.edge_id} className="hover:bg-slate-800/40 transition">
+                            <td className="py-3 pl-2">
+                              <span className="font-mono text-xs font-bold text-cyan-400 bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-800/40">
+                                {w.edge_id}
+                              </span>
+                            </td>
+                            <td className="py-3">
+                              <div className="font-semibold text-white text-xs flex items-center gap-1.5">
+                                <span>{sZone?.name || w.source}</span>
+                                <ArrowRight className="w-3 h-3 text-slate-500 shrink-0" />
+                                <span>{tZone?.name || w.target}</span>
+                              </div>
+                              <div className="text-[10px] text-slate-500 font-mono mt-0.5">
+                                {w.source} ↔ {w.target}
+                              </div>
+                            </td>
+                            <td className="py-3">
+                              <span className="text-[11px] text-slate-300 font-medium">
+                                {w.surface_type || 'PAVED'}
+                              </span>
+                              <span className="text-[10px] text-slate-500 block">
+                                Clearance: {w.clearance_type || 'STANDARD'}
+                              </span>
+                            </td>
+                            <td className="py-3 font-mono text-[11px] text-slate-300">
+                              <div>{Math.round(w.distance_meters || 0)} meters</div>
+                              <div className="text-[10px] text-slate-500">
+                                ~{(w.estimated_walk_minutes || 0).toFixed(1)} min walk
+                              </div>
+                            </td>
+                            <td className="py-3">
+                              {w.is_open ? (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1 w-fit">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                                  OPEN
+                                </span>
+                              ) : (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1 w-fit">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                                  RESTRICTED / CLOSED
+                                </span>
+                              )}
+                              {w.restriction_reason && !w.is_open && (
+                                <div className="text-[10px] text-slate-400 mt-0.5 max-w-xs truncate">
+                                  {w.restriction_reason}
+                                </div>
+                              )}
+                            </td>
+                            <td className="py-3 text-right pr-2">
+                              {currentUser?.role === 'ADMIN' ? (
+                                <button
+                                  onClick={() => handleToggleWalkway(w.edge_id, !w.is_open)}
+                                  disabled={isTogglingWalkway}
+                                  className={`px-3 py-1 rounded-lg font-bold text-[11px] transition inline-flex items-center gap-1.5 disabled:opacity-50 ${
+                                    w.is_open
+                                      ? 'bg-slate-800 hover:bg-amber-600/80 text-amber-300 hover:text-white border border-slate-700'
+                                      : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/30'
+                                  }`}
+                                >
+                                  {isTogglingWalkway ? (
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                  ) : w.is_open ? (
+                                    <Lock className="w-3 h-3" />
+                                  ) : (
+                                    <Unlock className="w-3 h-3" />
+                                  )}
+                                  <span>{w.is_open ? 'Close Walkway' : 'Reopen Walkway'}</span>
+                                </button>
+                              ) : (
+                                <span className="text-[10px] text-slate-500 italic">Admin Only</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </main>
         )}
@@ -2356,6 +2594,13 @@ export default function App() {
         isOpen={isAlgorithmsOpen}
         onClose={() => setIsAlgorithmsOpen(false)}
         zones={zones}
+      />
+
+      {/* Add Campus Zone Modal */}
+      <AddZoneModal
+        isOpen={isAddZoneOpen}
+        onClose={() => setIsAddZoneOpen(false)}
+        onAddZone={handleAddZone}
       />
     </div>
   );

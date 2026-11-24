@@ -71,8 +71,23 @@ def create_zone(
     _role: dict = Depends(require_role(["ADMIN"])),
 ):
     """Registers a new campus security zone with validated coordinates. Restricted to ADMIN."""
+    if user.get("role") != "ADMIN":
+        raise HTTPException(
+            status_code=403,
+            detail=f"Role '{user.get('role')}' is not authorized to register campus zones. Required: ['ADMIN'].",
+        )
+
+    if zone.zone_id in campus_env.zones:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Zone ID '{zone.zone_id}' already exists. Duplicate IDs are not permitted.",
+        )
+
     try:
         saved = campus_env.add_or_update_zone(zone.dict())
+        saved.setdefault("risk_score", 20.0)
+        saved.setdefault("risk_level", "Low")
+        saved.setdefault("risk_color", "#10B981")
         return {"status": "SUCCESS", "message": f"Zone {zone.zone_id} added successfully.", "zone": saved}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -87,6 +102,12 @@ def toggle_zone_restriction(
     _role: dict = Depends(require_role(["ADMIN"])),
 ):
     """Restricts or reopens a campus zone. Restricted to ADMIN."""
+    if user.get("role") != "ADMIN":
+        raise HTTPException(
+            status_code=403,
+            detail=f"Role '{user.get('role')}' is not authorized to alter zone restrictions. Required: ['ADMIN'].",
+        )
+
     success = campus_env.set_zone_restriction(zone_id, is_restricted, reason)
     if not success:
         raise HTTPException(status_code=404, detail=f"Zone {zone_id} not found.")
@@ -96,6 +117,13 @@ def toggle_zone_restriction(
         "is_restricted": is_restricted,
         "reason": reason,
     }
+
+
+@router.get("/edges")
+def get_edges(user: dict = Depends(get_current_user)):
+    """Returns all campus pedestrian walkways with current operational status. Requires authentication."""
+    edges = campus_env.get_all_edges()
+    return {"edges": edges, "total": len(edges), "last_updated": campus_env.last_updated}
 
 
 @router.get("/graph")
@@ -122,6 +150,12 @@ def toggle_edge_status(
     _role: dict = Depends(require_role(["ADMIN"])),
 ):
     """Closes or reopens a walkable campus path. Restricted to ADMIN."""
+    if user.get("role") != "ADMIN":
+        raise HTTPException(
+            status_code=403,
+            detail=f"Role '{user.get('role')}' is not authorized to modify walkway status. Required: ['ADMIN'].",
+        )
+
     success = campus_env.set_edge_status(edge_id, is_open, restriction_reason)
     if not success:
         raise HTTPException(status_code=404, detail=f"Edge {edge_id} not found.")
