@@ -56,6 +56,7 @@ import {
   HelpCircle,
   Building,
   Zap,
+  X,
 } from 'lucide-react';
 
 export default function App() {
@@ -95,6 +96,13 @@ export default function App() {
   const [newIncidentSeverity, setNewIncidentSeverity] = useState(4);
   const [newIncidentDesc, setNewIncidentDesc] = useState('');
   const [isSubmittingIncident, setIsSubmittingIncident] = useState(false);
+
+  // Incident Lifecycle & Status Management States
+  const [incidentStatusFilter, setIncidentStatusFilter] = useState('ALL'); // 'ALL' | 'ACTIVE' | 'INVESTIGATING' | 'RESOLVED'
+  const [resolvingIncident, setResolvingIncident] = useState(null);
+  const [resolutionNotes, setResolutionNotes] = useState('');
+  const [isUpdatingIncident, setIsUpdatingIncident] = useState(false);
+  const [incidentNotification, setIncidentNotification] = useState(null);
 
   // Selected Zone State with full 8-factor risk breakdown
   const [selectedZone, setSelectedZone] = useState({
@@ -552,6 +560,59 @@ export default function App() {
     }
   };
 
+  const handleInvestigateIncident = async (incident) => {
+    setIsUpdatingIncident(true);
+    setIncidentNotification(null);
+    try {
+      const res = await apiService.updateIncidentStatus(
+        incident.incident_id,
+        'INVESTIGATING',
+        `Investigation initiated by ${currentUser?.full_name || 'Security Officer'}.`
+      );
+      setIncidentNotification({
+        type: 'success',
+        text: res.message || `Incident ${incident.incident_id} marked as INVESTIGATING.`,
+      });
+      await fetchDashboardData();
+    } catch (err) {
+      setIncidentNotification({
+        type: 'error',
+        text: err.message || 'Failed to update incident status.',
+      });
+    } finally {
+      setIsUpdatingIncident(false);
+    }
+  };
+
+  const handleConfirmResolve = async (e) => {
+    if (e) e.preventDefault();
+    if (!resolvingIncident) return;
+    setIsUpdatingIncident(true);
+    setIncidentNotification(null);
+    try {
+      const notes = resolutionNotes.trim() || 'Incident resolved and cleared by security personnel.';
+      const res = await apiService.updateIncidentStatus(
+        resolvingIncident.incident_id,
+        'RESOLVED',
+        notes
+      );
+      setIncidentNotification({
+        type: 'success',
+        text: res.message || `Incident ${resolvingIncident.incident_id} resolved successfully.`,
+      });
+      setResolvingIncident(null);
+      setResolutionNotes('');
+      await fetchDashboardData();
+    } catch (err) {
+      setIncidentNotification({
+        type: 'error',
+        text: err.message || 'Failed to resolve incident.',
+      });
+    } finally {
+      setIsUpdatingIncident(false);
+    }
+  };
+
   // If not logged in, render Login Page
   if (!currentUser) {
     return <LoginPage onLoginSuccess={handleLoginSuccess} />;
@@ -600,6 +661,17 @@ export default function App() {
       z.category?.toLowerCase().includes(zoneSearchQuery.toLowerCase())
     );
   });
+
+  // Filtered incidents for Incidents Tab
+  const filteredIncidents = incidents.filter((inc) => {
+    const st = (inc.status || 'ACTIVE').toUpperCase();
+    if (incidentStatusFilter === 'ALL') return true;
+    return st === incidentStatusFilter;
+  });
+
+  const activeIncidentsCount = incidents.filter((i) => (i.status || 'ACTIVE').toUpperCase() === 'ACTIVE').length;
+  const investigatingIncidentsCount = incidents.filter((i) => (i.status || '').toUpperCase() === 'INVESTIGATING').length;
+  const resolvedIncidentsCount = incidents.filter((i) => (i.status || '').toUpperCase() === 'RESOLVED').length;
 
   // Sidebar navigation items
   const NAV_ITEMS = [
@@ -713,9 +785,13 @@ export default function App() {
             </div>
 
             {/* Notification Bell */}
-            <div className="relative p-2 rounded-xl bg-slate-800/60 hover:bg-slate-800 text-slate-300 hover:text-white cursor-pointer transition border border-slate-700/60">
+            <div
+              onClick={() => setActiveNav('Incidents')}
+              className="relative p-2 rounded-xl bg-slate-800/60 hover:bg-slate-800 text-slate-300 hover:text-white cursor-pointer transition border border-slate-700/60"
+              title="Click to view Incidents"
+            >
               <Bell className="w-4 h-4" />
-              {incidents.length > 0 && (
+              {activeIncidentsCount + investigatingIncidentsCount > 0 && (
                 <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-amber-400"></span>
               )}
             </div>
@@ -1545,6 +1621,7 @@ export default function App() {
             {/* Right Column: Live Incidents Feed */}
             <div className="col-span-12 lg:col-span-6 bg-[#091224] border border-slate-800/90 rounded-2xl p-4 shadow-xl flex flex-col justify-between text-slate-200">
               <div>
+                {/* Header */}
                 <div className="flex items-center justify-between border-b border-slate-800 pb-2.5 mb-3">
                   <div className="flex items-center gap-2">
                     <Activity className="w-4 h-4 text-amber-400" />
@@ -1564,25 +1641,107 @@ export default function App() {
                   </div>
                 </div>
 
+                {/* Status Filter Tabs */}
+                <div className="flex items-center gap-1.5 pb-2.5 mb-3 border-b border-slate-800/80 overflow-x-auto">
+                  <button
+                    onClick={() => setIncidentStatusFilter('ALL')}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition whitespace-nowrap ${
+                      incidentStatusFilter === 'ALL'
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
+                    }`}
+                  >
+                    All ({incidents.length})
+                  </button>
+                  <button
+                    onClick={() => setIncidentStatusFilter('ACTIVE')}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition whitespace-nowrap flex items-center gap-1.5 ${
+                      incidentStatusFilter === 'ACTIVE'
+                        ? 'bg-amber-600 text-white shadow-sm'
+                        : 'bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
+                    }`}
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                    <span>Active ({activeIncidentsCount})</span>
+                  </button>
+                  <button
+                    onClick={() => setIncidentStatusFilter('INVESTIGATING')}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition whitespace-nowrap flex items-center gap-1.5 ${
+                      incidentStatusFilter === 'INVESTIGATING'
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
+                    }`}
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
+                    <span>Investigating ({investigatingIncidentsCount})</span>
+                  </button>
+                  <button
+                    onClick={() => setIncidentStatusFilter('RESOLVED')}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition whitespace-nowrap flex items-center gap-1.5 ${
+                      incidentStatusFilter === 'RESOLVED'
+                        ? 'bg-emerald-600 text-white shadow-sm'
+                        : 'bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800'
+                    }`}
+                  >
+                    <Check className="w-3 h-3 stroke-[3]" />
+                    <span>Resolved ({resolvedIncidentsCount})</span>
+                  </button>
+                </div>
+
+                {/* Action Notification Toast / Banner */}
+                {incidentNotification && (
+                  <div
+                    className={`mb-3 p-2.5 rounded-xl border flex items-center justify-between text-xs animate-in fade-in duration-150 ${
+                      incidentNotification.type === 'success'
+                        ? 'bg-emerald-950/40 border-emerald-700/60 text-emerald-300'
+                        : 'bg-red-950/40 border-red-700/60 text-red-300'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      {incidentNotification.type === 'success' ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                      ) : (
+                        <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+                      )}
+                      <span>{incidentNotification.text}</span>
+                    </div>
+                    <button
+                      onClick={() => setIncidentNotification(null)}
+                      className="text-slate-400 hover:text-white ml-2"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
+
                 {/* Incidents List */}
-                <div className="space-y-2.5 max-h-[600px] overflow-y-auto pr-1">
-                  {incidents.length > 0 ? (
-                    incidents.map((inc) => {
+                <div className="space-y-2.5 max-h-[560px] overflow-y-auto pr-1">
+                  {filteredIncidents.length > 0 ? (
+                    filteredIncidents.map((inc) => {
                       const isHigh = (inc.severity || 1) >= 4;
+                      const status = (inc.status || 'ACTIVE').toUpperCase();
+                      const isResolved = status === 'RESOLVED';
+                      const isInvestigating = status === 'INVESTIGATING';
+
                       return (
                         <div
                           key={inc.incident_id || Math.random()}
                           className={`p-3 rounded-xl border transition ${
-                            isHigh
+                            isResolved
+                              ? 'bg-slate-900/40 border-slate-800/80'
+                              : isHigh
                               ? 'bg-red-950/20 border-red-800/60'
                               : 'bg-slate-900/60 border-slate-800'
                           }`}
                         >
-                          <div className="flex items-start justify-between gap-2 mb-1">
+                          {/* Card Header: Severity, Category, ID, Status Badge */}
+                          <div className="flex items-start justify-between gap-2 mb-1.5">
                             <div className="flex items-center gap-2">
                               <span
                                 className={`text-[10px] font-bold font-mono px-2 py-0.5 rounded ${
-                                  isHigh
+                                  isResolved
+                                    ? 'bg-slate-800 text-slate-400 border border-slate-700'
+                                    : isHigh
                                     ? 'bg-red-500/20 text-red-400 border border-red-500/40'
                                     : 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
                                 }`}
@@ -1593,23 +1752,93 @@ export default function App() {
                                 {inc.category?.replace(/_/g, ' ') || 'SECURITY EVENT'}
                               </span>
                             </div>
-                            <span className="text-[10px] font-mono text-slate-400">
-                              {inc.incident_id}
-                            </span>
+
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] font-mono text-slate-400">
+                                {inc.incident_id}
+                              </span>
+                              {isResolved ? (
+                                <span className="text-[10px] font-bold font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1">
+                                  <Check className="w-3 h-3 stroke-[3]" />
+                                  <span>RESOLVED</span>
+                                </span>
+                              ) : isInvestigating ? (
+                                <span className="text-[10px] font-bold font-mono px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/40 flex items-center gap-1">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse"></span>
+                                  <span>INVESTIGATING</span>
+                                </span>
+                              ) : (
+                                <span className="text-[10px] font-bold font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                                  ACTIVE
+                                </span>
+                              )}
+                            </div>
                           </div>
 
+                          {/* Description */}
                           <p className="text-xs text-slate-300 mt-1 leading-relaxed">
                             {inc.description}
                           </p>
 
+                          {/* Resolution Details (if resolved) */}
+                          {isResolved && inc.resolution_notes && (
+                            <div className="mt-2 p-2 rounded-lg bg-emerald-950/30 border border-emerald-800/40 text-[11px] text-emerald-200">
+                              <div className="font-semibold text-emerald-300 flex items-center gap-1 mb-0.5">
+                                <CheckCircle2 className="w-3 h-3" />
+                                <span>Resolution Record</span>
+                              </div>
+                              <p className="text-[11px] text-emerald-200/90 leading-relaxed">
+                                {inc.resolution_notes}
+                              </p>
+                              {inc.resolved_by && (
+                                <div className="text-[10px] text-slate-400 mt-1 flex items-center justify-between border-t border-emerald-900/40 pt-1">
+                                  <span>Cleared by: <strong>{inc.resolved_by}</strong></span>
+                                  {inc.resolved_at && (
+                                    <span className="font-mono text-slate-500">
+                                      {new Date(inc.resolved_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Card Footer: Location + Action Buttons */}
                           <div className="flex items-center justify-between pt-2 mt-2 border-t border-slate-800/70 text-[10px] text-slate-400">
                             <span className="flex items-center gap-1">
                               <MapPin className="w-3 h-3 text-blue-400" />
                               <span>{inc.zone_name || inc.zone_id}</span>
                             </span>
-                            <span className="font-mono">
-                              Status: <strong className="text-emerald-400">{inc.status || 'ACTIVE'}</strong>
-                            </span>
+
+                            {/* Action Buttons for Operators (Disabled if already resolved) */}
+                            {!isResolved && (
+                              <div className="flex items-center gap-1.5">
+                                {status === 'ACTIVE' && (
+                                  <button
+                                    onClick={() => handleInvestigateIncident(inc)}
+                                    disabled={isUpdatingIncident}
+                                    className="px-2.5 py-1 rounded-lg bg-blue-600/20 hover:bg-blue-600 text-blue-300 hover:text-white border border-blue-500/40 text-[11px] font-semibold transition flex items-center gap-1 disabled:opacity-50"
+                                    title="Mark incident as under investigation"
+                                  >
+                                    <Activity className="w-3 h-3" />
+                                    <span>Investigate</span>
+                                  </button>
+                                )}
+
+                                <button
+                                  onClick={() => {
+                                    setResolvingIncident(inc);
+                                    setResolutionNotes('');
+                                  }}
+                                  disabled={isUpdatingIncident}
+                                  className="px-2.5 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-500/40 text-[11px] font-semibold transition flex items-center gap-1 disabled:opacity-50"
+                                  title="Mark incident as resolved"
+                                >
+                                  <Check className="w-3 h-3 stroke-[3]" />
+                                  <span>Resolve</span>
+                                </button>
+                              </div>
+                            )}
                           </div>
                         </div>
                       );
@@ -1617,7 +1846,7 @@ export default function App() {
                   ) : (
                     <div className="text-center py-16 text-slate-500 text-xs">
                       <CheckCircle2 className="w-8 h-8 text-emerald-500/40 mx-auto mb-2" />
-                      <p>All sectors peaceful. No active incidents recorded.</p>
+                      <p>No incidents match the '{incidentStatusFilter.toLowerCase()}' filter.</p>
                     </div>
                   )}
                 </div>
@@ -1628,6 +1857,84 @@ export default function App() {
                 <span className="font-mono text-slate-400">Sync: Real-time</span>
               </div>
             </div>
+
+            {/* Resolve Incident Confirmation Modal */}
+            {resolvingIncident && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-150">
+                <div className="bg-[#091224] border border-slate-700/80 rounded-2xl w-full max-w-md p-5 shadow-2xl relative text-slate-100">
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 bg-emerald-500/20 text-emerald-400 rounded-xl">
+                        <CheckCircle2 className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h3 className="font-bold text-sm text-white">Resolve Security Incident</h3>
+                        <p className="text-[10px] font-mono text-slate-400">{resolvingIncident.incident_id}</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setResolvingIncident(null)}
+                      className="text-slate-400 hover:text-white transition p-1"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <form onSubmit={handleConfirmResolve} className="space-y-3">
+                    <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 space-y-1.5 text-xs">
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="text-slate-400">Affected Sector:</span>
+                        <strong className="text-white">{resolvingIncident.zone_name || resolvingIncident.zone_id}</strong>
+                      </div>
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="text-slate-400">Severity Tier:</span>
+                        <span className="font-mono text-amber-400 font-bold">SEV {resolvingIncident.severity || 1}</span>
+                      </div>
+                      <p className="text-slate-300 text-[11px] pt-1.5 border-t border-slate-800 leading-relaxed">
+                        {resolvingIncident.description}
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="text-[11px] font-semibold text-slate-300 block mb-1">
+                        Resolution Notes <span className="text-slate-500 font-normal">(Actions taken, field clearance details)</span>
+                      </label>
+                      <textarea
+                        rows="3"
+                        placeholder="Detail actions taken, field team clearance, student verification..."
+                        value={resolutionNotes}
+                        onChange={(e) => setResolutionNotes(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-700/80 rounded-xl p-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                        autoFocus
+                      />
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-2 border-t border-slate-800">
+                      <button
+                        type="button"
+                        onClick={() => setResolvingIncident(null)}
+                        disabled={isUpdatingIncident}
+                        className="flex-1 py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={isUpdatingIncident}
+                        className="flex-1 py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-lg shadow-emerald-600/30 transition flex items-center justify-center gap-1.5 disabled:opacity-50"
+                      >
+                        {isUpdatingIncident ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Check className="w-3.5 h-3.5 stroke-[3]" />
+                        )}
+                        <span>Confirm Resolution</span>
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
           </main>
         )}
 

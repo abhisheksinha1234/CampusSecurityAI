@@ -210,6 +210,26 @@ export const apiService = {
     return res.json();
   },
 
+  async updateIncidentStatus(incidentId, status, resolutionNotes = '') {
+    const res = await fetch(`${API_BASE}/risk/incidents/${encodeURIComponent(incidentId)}/status`, {
+      method: 'PUT',
+      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+      credentials: 'include',
+      body: JSON.stringify({
+        status,
+        resolution_notes: resolutionNotes,
+      }),
+    });
+    if (res.status === 401) {
+      throw new Error('AUTH_EXPIRED');
+    }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `Failed to update incident status to ${status}`);
+    }
+    return res.json();
+  },
+
   // Patrol Agent Planning
   async generatePatrolPlan({ startZoneId = 'Z12', endZoneId = 'Z12', timeBudgetMinutes = 45, dwellMinutes = 2 } = {}) {
     const params = new URLSearchParams({
