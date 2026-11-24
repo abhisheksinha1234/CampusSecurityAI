@@ -102,6 +102,90 @@ class CampusEnvironment:
         self.last_updated = datetime.now(timezone.utc).isoformat()
         return incident
 
+    def get_incident(self, incident_id: str) -> Optional[Dict[str, Any]]:
+        for inc in self.incidents:
+            if inc.get("incident_id") == incident_id:
+                return inc
+        return None
+
+    def update_incident_status(
+        self,
+        incident_id: str,
+        new_status: str,
+        resolution_notes: Optional[str] = None,
+        updated_by: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Updates incident status following the supported lifecycle:
+        ACTIVE -> INVESTIGATING -> RESOLVED
+        Raises KeyError if incident not found, ValueError if status/transition invalid.
+        """
+        target_incident = self.get_incident(incident_id)
+        if not target_incident:
+            raise KeyError(f"Incident {incident_id} not found.")
+
+        valid_statuses = {"ACTIVE", "INVESTIGATING", "RESOLVED"}
+        normalized_status = (new_status or "").strip().upper()
+        if normalized_status not in valid_statuses:
+            raise ValueError(
+                f"Invalid status '{new_status}'. Allowed values: ACTIVE, INVESTIGATING, RESOLVED."
+            )
+
+        current_status = target_incident.get("status", "ACTIVE").upper()
+
+        # Enforce lifecycle transitions: ACTIVE -> INVESTIGATING -> RESOLVED
+        valid_transitions = {
+            "ACTIVE": {"INVESTIGATING", "RESOLVED"},
+            "INVESTIGATING": {"RESOLVED"},
+            "RESOLVED": set(),  # Terminal state: cannot be transitioned again
+        }
+
+        allowed_next = valid_transitions.get(current_status, set())
+        if normalized_status not in allowed_next:
+            if current_status == "RESOLVED":
+                raise ValueError(
+                    f"Incident {incident_id} is already RESOLVED and cannot be modified."
+                )
+            if normalized_status == current_status:
+                raise ValueError(
+                    f"Incident {incident_id} is already in '{current_status}' status."
+                )
+            raise ValueError(
+                f"Invalid status transition from '{current_status}' to '{normalized_status}'. "
+                f"Allowed transitions from '{current_status}': {sorted(list(allowed_next))}."
+            )
+
+        now = datetime.now(timezone.utc).isoformat()
+        operator = updated_by or "Security Personnel"
+
+        # Initialize audit history list if not present
+        if "status_history" not in target_incident or not isinstance(target_incident["status_history"], list):
+            target_incident["status_history"] = []
+
+        target_incident["status_history"].append({
+            "from_status": current_status,
+            "to_status": normalized_status,
+            "timestamp": now,
+            "updated_by": operator,
+            "notes": resolution_notes or "",
+        })
+
+        target_incident["status"] = normalized_status
+        target_incident["updated_at"] = now
+        target_incident["updated_by"] = operator
+
+        if resolution_notes:
+            target_incident["resolution_notes"] = resolution_notes
+
+        if normalized_status == "RESOLVED":
+            target_incident["resolved_at"] = now
+            target_incident["resolved_by"] = operator
+            if not target_incident.get("resolution_notes"):
+                target_incident["resolution_notes"] = resolution_notes or "Incident resolved successfully."
+
+        self.last_updated = now
+        return target_incident
+
     def get_active_incidents(self, zone_id: Optional[str] = None) -> List[Dict[str, Any]]:
         if zone_id:
             return [

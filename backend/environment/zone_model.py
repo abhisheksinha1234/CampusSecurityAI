@@ -52,6 +52,11 @@ class IncidentModel(BaseModel):
     is_simulated: bool = Field(True, description="Flag indicating synthetic demonstration incident")
 
 
+class IncidentStatusUpdateRequest(BaseModel):
+    status: str = Field(..., description="Target status: ACTIVE, INVESTIGATING, or RESOLVED")
+    resolution_notes: Optional[str] = Field(None, description="Operational notes or rationale for status transition")
+
+
 class RiskScoreBreakdown(BaseModel):
     zone_id: str
     zone_name: str
