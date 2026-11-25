@@ -4,7 +4,7 @@
  * Handles Authentication, Session Tokens, and HttpOnly Cookies.
  */
 
-const API_BASE = '/api';
+const API_BASE = import.meta.env.VITE_API_URL || 'https://campus-security-ai-backend.onrender.com';
 
 function getAuthHeaders(extraHeaders = {}) {
   const token = localStorage.getItem('lpu_security_token');
