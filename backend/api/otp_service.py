@@ -174,9 +174,9 @@ def send_otp_email(
 
         context = ssl.create_default_context()
         with smtplib.SMTP("smtp.gmail.com", 587, timeout=15) as server:
-    server.starttls(context=context)
-    server.login(sender, app_pwd)
-    server.send_message(msg)
+            server.starttls(context=context)
+            server.login(sender, app_pwd)
+            server.send_message(msg)
 
         return True, f"OTP verification code sent to {recipient_email} via Gmail."
     except smtplib.SMTPAuthenticationError:
