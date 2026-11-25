@@ -186,7 +186,7 @@ def send_otp_email(
     except Exception as e:
         return (
             False,
-            f"Gmail SMTP dispatch failed ({type(e).__name__}). Check network connection or Gmail settings.",
+            f"Gmail SMTP dispatch failed: {str(e)}",
         )
 
 
