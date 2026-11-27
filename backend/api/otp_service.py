@@ -173,7 +173,8 @@ def send_otp_email(
         msg.add_alternative(html_content, subtype="html")
 
         context = ssl.create_default_context()
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context, timeout=15) as server:
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=15) as server:
+            server.starttls(context=context)
             server.login(sender, app_pwd)
             server.send_message(msg)
 
@@ -186,7 +187,7 @@ def send_otp_email(
     except Exception as e:
         return (
             False,
-            f"Gmail SMTP dispatch failed ({type(e).__name__}). Check network connection or Gmail settings.",
+            f"Gmail SMTP dispatch failed: {str(e)}",
         )
 
 
