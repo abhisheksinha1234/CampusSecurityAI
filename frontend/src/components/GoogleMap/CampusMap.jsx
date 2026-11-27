@@ -290,6 +290,7 @@ export const CampusMap = ({
   incidents = [],
   selectedZone = null,
   onSelectZone,
+  onInspectZone,
   onApprovePlan,
 }) => {
   const mapContainerRef = useRef(null);
@@ -299,6 +300,14 @@ export const CampusMap = ({
   const polygonsMapRef  = useRef(new Map());
   const heatCirclesMapRef = useRef(new Map());
   const prevSelectedZoneIdRef = useRef(null);
+  const onSelectZoneRef = useRef(onSelectZone);
+  const onInspectZoneRef = useRef(onInspectZone);
+  const effectiveZonesRef = useRef([]);
+
+  useEffect(() => {
+    onSelectZoneRef.current = onSelectZone;
+    onInspectZoneRef.current = onInspectZone;
+  }, [onSelectZone, onInspectZone]);
 
   // Five separate, independent layer groups
   const buildingsLayerRef = useRef(null); // Layer 1: zone polygons + circle markers
@@ -325,6 +334,7 @@ export const CampusMap = ({
 
   // Merge loaded backend zones with verified fallback dataset
   const effectiveZones = zones && zones.length > 0 ? zones : VERIFIED_LPU_ZONES;
+  effectiveZonesRef.current = effectiveZones;
   const activeLayerCount = [showBuildings, showRiskZones, showRoute, showWaypoints, showIncidents].filter(Boolean).length;
 
   // ─── 1. Initialize Map Instance (run once on mount) ──────────────────────
@@ -389,8 +399,54 @@ export const CampusMap = ({
     const onResize = () => mapInstanceRef.current?.invalidateSize();
     const onZoom = () => setCurrentZoom(map.getZoom());
 
+    const handlePopupOpen = (e) => {
+      const popupEl = e?.popup?.getElement?.();
+      if (!popupEl) return;
+
+      const btn = popupEl.querySelector('[data-inspect-zone]');
+      if (!btn) return;
+
+      const zoneId = btn.getAttribute('data-inspect-zone');
+      const zone =
+        e.popup?._source?.options?.zoneData ||
+        effectiveZonesRef.current.find((z) => z.zone_id === zoneId) ||
+        zoneId;
+
+      const handleInspectClick = (clickEvent) => {
+        if (clickEvent) {
+          clickEvent.preventDefault();
+          clickEvent.stopPropagation();
+        }
+        mapInstanceRef.current?.closePopup();
+        if (onInspectZoneRef.current) {
+          onInspectZoneRef.current(zone);
+        } else {
+          onSelectZoneRef.current?.(zone);
+        }
+      };
+
+      if (btn._inspectCleanup) {
+        btn._inspectCleanup();
+      }
+      btn.addEventListener('click', handleInspectClick);
+      btn._inspectCleanup = () => btn.removeEventListener('click', handleInspectClick);
+    };
+
+    const handlePopupClose = (e) => {
+      const popupEl = e?.popup?.getElement?.();
+      if (!popupEl) return;
+
+      const btn = popupEl.querySelector('[data-inspect-zone]');
+      if (btn && btn._inspectCleanup) {
+        btn._inspectCleanup();
+        delete btn._inspectCleanup;
+      }
+    };
+
     window.addEventListener('resize', onResize);
     map.on('zoomend', onZoom);
+    map.on('popupopen', handlePopupOpen);
+    map.on('popupclose', handlePopupClose);
 
     return () => {
       window.removeEventListener('resize', onResize);
@@ -399,6 +455,8 @@ export const CampusMap = ({
           mapInstanceRef.current.closePopup();
         } catch (_) {}
         mapInstanceRef.current.off('zoomend', onZoom);
+        mapInstanceRef.current.off('popupopen', handlePopupOpen);
+        mapInstanceRef.current.off('popupclose', handlePopupClose);
         mapInstanceRef.current.off();
         mapInstanceRef.current.remove();
         mapInstanceRef.current = null;
@@ -475,6 +533,7 @@ export const CampusMap = ({
           fillColor: catColor,
           fillOpacity: isSelected ? 0.25 : 0.12,
           dashArray: isRestricted ? '6,4' : undefined,
+          zoneData: zone,
         });
 
         const polyPopup = buildZonePopup(zone, riskScore, riskLevel, riskColor, isRestricted);
@@ -497,20 +556,17 @@ export const CampusMap = ({
         pane: 'sectorMarkersPane',
         icon,
         zIndexOffset: getRiskZIndex(riskScore, riskLevel) + (isSelected ? 2000 : 0),
+        zoneData: zone,
       });
 
       const popupHtml = buildZonePopup(zone, riskScore, riskLevel, riskColor, isRestricted);
       marker.bindPopup(popupHtml, { maxWidth: 300, closeButton: true });
       marker.on('click', () => onSelectZone?.(zone));
-      marker.on('popupopen', () => {
-        const btn = document.getElementById(`inspect-btn-${zone.zone_id}`);
-        if (btn) btn.onclick = () => { onSelectZone?.(zone); marker.closePopup(); };
-      });
 
       buildingsLayerRef.current.addLayer(marker);
       markersMapRef.current.set(zone.zone_id, marker);
     });
-  }, [isMapReady, effectiveZones, showBuildings, onSelectZone, currentZoom]);
+  }, [isMapReady, effectiveZones, showBuildings, onSelectZone, onInspectZone, currentZoom]);
 
   // ─── 4. LAYER 2: Risk Heat Coverage Zones ─────────────────────────────────
   useEffect(() => {
@@ -1209,7 +1265,7 @@ function buildZonePopup(zone, riskScore, riskLevel, riskColor, isRestricted) {
         </div>
       </div>
 
-      <button id="inspect-btn-${zone.zone_id}"
+      <button id="inspect-btn-${zone.zone_id}" data-inspect-zone="${zone.zone_id}"
         style="width:100%; padding:5px 0; border-radius:8px; background:#1D4ED8;
           color:#fff; font-size:11px; font-weight:700; border:none; cursor:pointer;
           font-family:inherit; transition:background 0.2s;"

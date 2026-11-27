@@ -156,6 +156,8 @@ export default function App() {
     },
   });
 
+  const [isLoadingExplanation, setIsLoadingExplanation] = useState(false);
+
   // Keep clock updated
   useEffect(() => {
     const updateTime = () => {
@@ -183,11 +185,27 @@ export default function App() {
 
   // Fetch 8-Factor Explainable AI Breakdown for any zone (purely user/selection driven)
   const fetchZoneRiskExplanation = useCallback(async (zoneId, defaultName = '') => {
+    setIsLoadingExplanation(true);
+    const zoneInList = zonesRef.current.find((z) => z.zone_id === zoneId);
+
+    // Optimistically update zone identity while clearing previous factors to avoid stale data display
+    setSelectedZone((prev) => ({
+      ...prev,
+      zone_id: zoneId,
+      name: defaultName || zoneInList?.name || zoneId,
+      category: zoneInList?.category || prev?.category || 'Standard',
+      description: zoneInList?.description || prev?.description || '',
+      is_restricted: zoneInList?.is_restricted ?? false,
+      last_patrol_hours_ago: zoneInList?.last_patrol_hours_ago || 1.0,
+      factors: null,
+      topFactors: [],
+      risk_breakdown: null,
+    }));
+
     try {
       const res = await apiService.explainZoneRisk(zoneId);
       const evalData = res.risk_evaluation || {};
       const expData = res.explanation || {};
-      const zoneInList = zonesRef.current.find((z) => z.zone_id === zoneId);
 
       const zoneObj = {
         zone_id: res.zone_id || zoneId,
@@ -211,6 +229,8 @@ export default function App() {
       setSelectedZone(zoneObj);
     } catch (err) {
       console.warn(`Could not load explanation for ${zoneId}:`, err);
+    } finally {
+      setIsLoadingExplanation(false);
     }
   }, []);
 
@@ -407,6 +427,12 @@ export default function App() {
 
     fetchZoneRiskExplanation(targetId, targetName);
   }, [fetchZoneRiskExplanation]);
+
+  // Inspect Zone Explainability Handler: Selects zone and navigates directly to Risk Analytics
+  const handleInspectZone = useCallback((zoneOrId) => {
+    handleSelectZone(zoneOrId);
+    setActiveNav('Risk Analytics');
+  }, [handleSelectZone]);
 
   // Human Approval Workflow Handler (HITL)
   const handleApprovePlan = async () => {
@@ -919,6 +945,7 @@ export default function App() {
                 incidents={incidents}
                 selectedZone={selectedZone}
                 onSelectZone={handleSelectZone}
+                onInspectZone={handleInspectZone}
               />
             </div>
 
@@ -1385,6 +1412,7 @@ export default function App() {
                 incidents={incidents}
                 selectedZone={selectedZone}
                 onSelectZone={handleSelectZone}
+                onInspectZone={handleInspectZone}
               />
 
               {/* Floating Selected Zone Overlay Bar */}
@@ -1573,6 +1601,7 @@ export default function App() {
                 <ExplainabilityPanel
                   zone={selectedZone}
                   onToggleRestriction={handleToggleRestriction}
+                  isLoading={isLoadingExplanation}
                 />
               </div>
             </div>

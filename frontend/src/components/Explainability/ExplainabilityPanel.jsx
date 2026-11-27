@@ -1,7 +1,19 @@
 import React from 'react';
-import { Info, ShieldAlert, Award, FileText, CheckCircle, AlertOctagon } from 'lucide-react';
+import { Info, ShieldAlert, Award, FileText, CheckCircle, AlertOctagon, Loader2 } from 'lucide-react';
 
-export const ExplainabilityPanel = ({ zone = null, onToggleRestriction }) => {
+export const ExplainabilityPanel = ({ zone = null, onToggleRestriction, isLoading = false }) => {
+  if (isLoading) {
+    return (
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl text-center text-slate-400 h-full flex flex-col items-center justify-center">
+        <Loader2 className="w-8 h-8 text-blue-500 animate-spin mb-3" />
+        <h4 className="font-semibold text-sm text-slate-200">Analyzing Zone Risk Factors...</h4>
+        <p className="text-xs text-slate-500 max-w-xs mt-1">
+          Querying 8-factor Explainable AI engine for {zone?.name || 'selected sector'}.
+        </p>
+      </div>
+    );
+  }
+
   if (!zone) {
     return (
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl text-center text-slate-500 h-full flex flex-col items-center justify-center">
